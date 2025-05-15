@@ -111,16 +111,18 @@ int main (void) {
 
 	const char data_response[] = "HTTP/1.1 200 OK\r\n"
 	"Access-Control-Allow-Origin: *\r\n"
-	"Content-Length: 676\r\n"
+	"Content-Length: 939\r\n"
 	"Connection: close\r\n"
 	"Content-Type: application/json\r\n"
 	"\r\n"
 	"["
-    "{\"city\":\"Perugia\",\"type\":1,\"temperature\":\"22°C\",\"humidity\":\"69%\",\"pressure\":\"1015 hPa\",\"wind_velocity\":12,\"wind_direction\":\"120° SE\"},"
-    "{\"city\":\"Perugia\",\"type\":2,\"temperature\":\"-2°C\",\"humidity\":\"80%\",\"pressure\":\"1420 hPa\",\"wind_velocity\":12,\"wind_direction\":\"110° E\"},"
-    "{\"city\":\"Perugia\",\"type\":3,\"temperature\":\"12°C\",\"humidity\":\"40%\",\"pressure\":\"1069 hPa\",\"wind_velocity\":5,\"wind_direction\":\"130° NE\"},"
-    "{\"city\":\"Perugia\",\"type\":4,\"temperature\":\"5°C\",\"humidity\":\"30%\",\"pressure\":\"1014 hPa\",\"wind_velocity\":120,\"wind_direction\":\"20° S\"},"
-    "{\"city\":\"Perugia\",\"type\":5,\"temperature\":\"22°C\",\"humidity\":\"42%\",\"pressure\":\"1078 hPa\",\"wind_velocity\":12,\"wind_direction\":\"13° SW\"}"
+	"{\"city\":\"Perugia\",\"type\":1,\"temperature\":\"22°\",\"humidity\":\"69%\",\"pressure\":\"1015 hPa\",\"wind_velocity\":12,\"wind_direction\":\"120° SE\"},"
+    "{\"city\":\"Perugia\",\"type\":2,\"temperature\":\"-2°\",\"humidity\":\"80%\",\"pressure\":\"1420 hPa\",\"wind_velocity\":12,\"wind_direction\":\"110° E\"},"
+    "{\"city\":\"Perugia\",\"type\":3,\"temperature\":\"12°\",\"humidity\":\"40%\",\"pressure\":\"1069 hPa\",\"wind_velocity\":5,\"wind_direction\":\"130° NE\"},"
+    "{\"city\":\"Perugia\",\"type\":4,\"temperature\":\"5°\",\"humidity\":\"30%\",\"pressure\":\"1014 hPa\",\"wind_velocity\":120,\"wind_direction\":\"20° S\"},"
+    "{\"city\":\"Perugia\",\"type\":5,\"temperature\":\"22°\",\"humidity\":\"42%\",\"pressure\":\"1078 hPa\",\"wind_velocity\":12,\"wind_direction\":\"13° SW\"},"
+    "{\"city\":\"Perugia\",\"type\":1,\"temperature\":\"32°\",\"humidity\":\"69%\",\"pressure\":\"1015 hPa\",\"wind_velocity\":69,\"wind_direction\":\"12° NW\"},"
+    "{\"city\":\"Perugia\",\"type\":2,\"temperature\":\"-45°\",\"humidity\":\"80%\",\"pressure\":\"1420 hPa\",\"wind_velocity\":42,\"wind_direction\":\"71° W\"}"
     "]";
 
 	printf("Listening on http://localhost:6969 ...\n\n");
