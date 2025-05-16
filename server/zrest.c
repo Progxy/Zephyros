@@ -102,17 +102,17 @@ int main (void) {
 	}
 
 	const char response[] = "HTTP/1.1 204 No Content\r\n"
+	"Content-Length: 0\r\n"
 	"Access-Control-Allow-Origin: *\r\n"
 	"Access-Control-Allow-Methods: POST, OPTIONS\r\n"
 	"Access-Control-Allow-Headers: content-type\r\n"
-	"Content-Length: 0\r\n"
-	"Connection: close\r\n"
+	"Connection: keep-alive\r\n"
 	"\r\n";
 
 	const char data_response[] = "HTTP/1.1 200 OK\r\n"
 	"Access-Control-Allow-Origin: *\r\n"
 	"Content-Length: 939\r\n"
-	"Connection: close\r\n"
+	"Connection: keep-alive\r\n"
 	"Content-Type: application/json\r\n"
 	"\r\n"
 	"["
