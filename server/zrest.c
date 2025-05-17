@@ -18,6 +18,8 @@
 #define SERVER_ADDR 0x7F000001 // Localhost: 127.0.0.1
 #define SERVER_PORT 6969
 
+#define SAFE_FREE(ptr) do { if ((ptr) != NULL) free(ptr), (ptr) = NULL; } while(0)
+
 static size_t str_len(const char* str) {
     if (str == NULL) return 0;
     const char* str_c = str;
@@ -36,6 +38,14 @@ static int str_tok(const char* str, const char* delim) {
 }
 
 #define CAST_PTR(ptr, type) ((type*) (ptr))
+
+static void* mem_cpy(void* dest, const void* src, size_t size) {
+	if (dest == NULL || src == NULL) return NULL;
+	unsigned char* dp = (unsigned char*) dest;
+	unsigned char* sp = (unsigned char*) src;
+	while (size--) *dp++ = *sp++;
+	return dest;
+}
 
 static void* mem_move(void* dest, const void* src, size_t size) {
     if (dest == NULL || src == NULL || size == 0) return NULL;
@@ -71,15 +81,111 @@ static void mem_set_var(void* ptr, long long int value, size_t size, size_t val_
 	return;
 }
 
-static void parse_json_request(const char* query, const int size) {
-	if (size < 0) {
-		printf("Failed to retrieve data\n");
-		return;
+#define IS_A_NUM(chr) ((chr >= '0') && (chr <= '9'))
+#define CHR_TO_NUM(chr) chr - '0'
+static long long int str_to_num(const char* str, const char* delim) {
+	long long int ret = 0;
+	ssize_t len = str_tok(str, delim);
+	if (len == -1) len = str_len(str);
+
+	for (ssize_t i = 0; i < len; ++i) {
+		if (IS_A_NUM(str[i])) {
+			ret *= 10;
+			ret += CHR_TO_NUM(str[i]);
+		} else return -1;
+	}
+
+	return ret;
+}
+
+static int str_n_cmp(const char* str1, const char* str2, size_t n) {
+    // Null Checks
+    if (str1 == NULL && str2 == NULL) return 0;
+    if (str1 == NULL) return -1;
+    else if (str2 == NULL) return 1;
+
+    size_t i = 0;
+    while ((str1[i] != '\0' || str2[i] != '\0') && i < n) {
+        if (str1[i] != str2[i]) return str1[i] - str2[i];
+        ++i;
+    }
+
+	return 0;
+}
+
+typedef enum RequestTypes { PREFLIGHT_CORS = 1, POST } RequestTypes;
+
+static int check_request_type(const char* buffer) {
+	if (str_n_cmp(buffer, "OPTIONS", 7) == 0) return PREFLIGHT_CORS;
+	else if (str_n_cmp(buffer, "POST", 4) == 0) return POST;
+
+	int pos = 0;
+	if ((pos = str_tok(buffer, "HTTP/1.1")) < 0) {
+		printf("Failed to find request type.\n");
+		return -1;
 	}
 	
-	printf("\nquery:\n\"%s\"\n", query);
+	printf("Unknown type \"%*.s\"\n", pos, buffer);
+	
+	return -1;
+}
 
-	return;
+
+static int parse_json_request(const char* query, char** city, unsigned char* day) {
+	printf("query: %s\n\n", query);
+
+	int pos = 0;
+	if ((pos = str_tok(query, "city")) < 0) {
+		printf("No field \"city\" found in the JSON.\n");
+		return -1;
+	}
+
+	int len = 0;
+	if ((len = str_tok(query + pos + 7, "\"")) < 0) {
+		printf("missing \" in JSON.\n");
+		return -1;
+	}
+	
+	*city = calloc(len, sizeof(char));
+	if (*city == NULL) {
+		printf("Failed to allocate buffer.\n");
+		return -1;
+	}
+	
+	mem_cpy(*city, query + pos + 7, len);
+
+	if ((pos = str_tok(query, "day")) < 0) {
+		printf("No field \"day\" found in the JSON.\n");
+		SAFE_FREE(*city);
+		return -1;
+	}
+	
+	long long int val = str_to_num(query + pos + 6, "\"");
+	if (val < 0) {
+		printf("missing \" in JSON.\n");
+		SAFE_FREE(*city);
+		return -1;
+	}
+	
+	*day = val;
+
+	return 0;
+}
+
+static int check_content_size(const char* buffer) {
+	int pos = str_tok(buffer, "Content-Length:");
+	if (pos < 0) {
+		printf("ERROR: no content-length specifier found.\n");
+		return -1;
+	}
+
+	long long int content_len = str_to_num(buffer + pos + 16, "\r\n");
+	if (content_len < 0) {
+		printf("ERROR: No value found at the end of the content field.\n");
+		return -1;
+	}
+
+	return content_len;
 }
 
 #ifdef _WIN32
@@ -175,7 +281,7 @@ static int init_server(int* sock) {
 #endif //_WIN32
 
 int main (void) {
-	const char response[] = "HTTP/1.1 204 No Content\r\n"
+	const char response_cors[] = "HTTP/1.1 204 No Content\r\n"
 	"Access-Control-Allow-Origin: *\r\n"
 	"Access-Control-Allow-Methods: POST, OPTIONS\r\n"
 	"Access-Control-Allow-Headers: content-type\r\n"
@@ -207,7 +313,6 @@ int main (void) {
 
 	printf("Listening on http://localhost:6969 ...\n\n");
 	
-	unsigned int i = 0;
 	while(TRUE) {
 		struct sockaddr_in client_addr = {0};
 		socklen_t client_addr_size = sizeof(client_addr);
@@ -219,7 +324,7 @@ int main (void) {
 			char *msg = NULL;
 			FormatMessageA(
 				FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM,
-				NULL, err, 0, (LPSTR)&msg, 0, NULL);
+				NULL, err, 0, (LPSTR) &msg, 0, NULL);
 			printf("Error message: %s\n", msg);
 			LocalFree(msg);
 		#else 
@@ -232,43 +337,111 @@ int main (void) {
 		printf("New connection accepted.\n");
 		printf("--------------------------\n");
 
-		printf("Receving:\n\"");
+#define BUFF_CHUNK 256
 
 		int ret = 0;
-		char buffer[256] = {0};
+		char* buffer = (char*) calloc(BUFF_CHUNK, sizeof(unsigned char));
+		if (buffer == NULL) {
+			printf("Failed to reallocate the buffer.\n");
+			return 1;
+		}
+		
+		char* content = NULL;
+
+		int request_type = 0;
 		unsigned long long int buf_cnt = 0;
-		while ((ret = recv(client_sock, buffer, sizeof(buffer) - 1, 0)) >= 0) {
+		while ((ret = recv(client_sock, buffer + buf_cnt, BUFF_CHUNK, 0)) >= 0) {
 			buf_cnt += ret;
-			printf("%s", buffer);
+
 			int pos = 0;
 			if ((pos = str_tok(buffer, "\r\n\r\n")) >= 0) {
-				if (i == 0) break;
-				parse_json_request((const char*) buffer + pos + 4, ret);
+				if ((request_type = check_request_type(buffer)) < 0) {
+					printf("Failed to check the request type.\n");
+					return 1;
+				}
+
+				printf("request_type: %d\n", request_type);
+
+				if (request_type == PREFLIGHT_CORS) {
+					SAFE_FREE(buffer);
+					break;
+				}
+				
+				int content_len = 0;
+				if ((content_len = check_content_size(buffer)) < 0) {
+					printf("\n\n-------\nBuffer(%llu): \"%s\"\n-------\n\n", buf_cnt, buffer);
+					free(buffer);
+					printf("An error occurred while checking the content length option field.\n");
+					return 1;
+				}
+				
+				if (content_len == 0) {
+					free(buffer);
+					break;
+				}
+
+				content = (char*) calloc(content_len, sizeof(char));
+				if (content == NULL) {
+					free(buffer);
+					printf("An error occrured while allocating content buffer.\n");
+					return 1;
+				}
+				
+				int already_received_content = (buf_cnt - pos - 4);
+				mem_cpy(content, buffer + pos + 4, already_received_content);
+				SAFE_FREE(buffer);
+				
+				int remaining_content = content_len - already_received_content;
+				if (remaining_content && (ret = recv(client_sock, content + already_received_content, remaining_content, 0)) != remaining_content) {
+					SAFE_FREE(content);
+					printf("ERROR: Expected %d bytes but received %d\n", remaining_content, ret);
+					return 1;
+				}
+				
 				break;
 			}
-			mem_set(buffer, 0, sizeof(buffer));
+
+			if ((buffer = realloc(buffer, buf_cnt + BUFF_CHUNK)) == NULL) {
+				printf("Failed to reallocate the buffer.\n");
+				return 1;
+			}
 		}
 
 		if (ret < 0) {
+			SAFE_FREE(content);
 			perror("An error occurred while reading, because");
 			return 1;
 		}
 		
-		printf("\"\nRead %llu bytes.\n", buf_cnt);
+		printf("Read %llu bytes.\n", buf_cnt);
 
-		int res_len = 0;
-		if (i == 0) {
-			if ((res_len = send(client_sock, response, sizeof(response), 0)) != sizeof(response)) {
-				if (res_len >= 0) printf("\nSent %d bytes out of %lu.\n", res_len, sizeof(response));
+		if (request_type == PREFLIGHT_CORS) {
+			int res_len = 0;
+			if ((res_len = send(client_sock, response_cors, sizeof(response_cors), 0)) != sizeof(response_cors)) {
+				if (res_len >= 0) printf("\nSent %d bytes out of %lu.\n", res_len, sizeof(response_cors));
 				perror("Failed to send the response");
 				return 1;
 			}
-		} else {
-			if ((res_len = send(client_sock, data_response, sizeof(data_response), 0)) != sizeof(data_response)) {
-				if (res_len >= 0) printf("\nSent %d bytes out of %lu.\n", res_len, sizeof(data_response));
-				perror("Failed to send the data_response");
-				return 1;
-			}
+			continue;
+		}
+
+		char* city = NULL;
+		unsigned char day = 0;
+		if (parse_json_request((const char*) content, &city, &day) < 0) {
+			printf("An error occurred while parsing the query.\n");
+			SAFE_FREE(content);
+			return 1;
+		}
+		
+		SAFE_FREE(content);
+
+		printf("Queried, city: '%s', day: %u\n", city, day);
+
+		int res_len = 0;
+		if ((res_len = send(client_sock, data_response, sizeof(data_response), 0)) != sizeof(data_response)) {
+			if (res_len >= 0) printf("\nSent %d bytes out of %lu.\n", res_len, sizeof(data_response));
+			perror("Failed to send the data_response");
+			return 1;
 		}
 
 		printf("Sent response back (%d)!\n", res_len);
@@ -278,8 +451,6 @@ int main (void) {
 		printf("-------------------\n");
 		printf("Connection closed.\n");
 		printf("-------------------\n");
-		
-		i = (i + 1) % 2;
 	}
 		
 	close_socket(sock);
