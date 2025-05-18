@@ -116,13 +116,13 @@ static int check_request_type(const char* buffer) {
 		return -1;
 	}
 	
-	printf("Unknown type \"%*.s\"\n", pos, buffer);
+	printf("Unknown type \"%.*s\"\n", pos, buffer);
 	
 	return -1;
 }
 
 static int parse_json_request(const char* query, const int size, char** city, char** session_key, unsigned char* day) {
-	printf("query: %*.s\n\n", size, query);
+	printf("query: %.*s\n\n", size, query);
 
 	int pos = 0;
 	if ((pos = str_n_tok(query, "city", size)) < 0) {
