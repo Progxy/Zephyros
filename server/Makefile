@@ -1,4 +1,4 @@
-CFLAGS = -std=c11 -Wall -Wextra -pedantic -lm
+CFLAGS = -std=c11 -Wall -Wextra -pedantic -ggdb -lm
 
 all: zrest zrest-win
 
