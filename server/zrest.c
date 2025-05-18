@@ -19,6 +19,9 @@
 #define SERVER_ADDR 0x7F000001 // Localhost: 127.0.0.1
 #define SERVER_PORT 6969
 
+#define AUTH_SERVER_ADDR 0x7F000001 // Localhost: 127.0.0.1
+#define AUTH_SERVER_PORT 4209
+
 #define SAFE_FREE(ptr) do { if ((ptr) != NULL) free(ptr), (ptr) = NULL; } while(0)
 
 static size_t str_len(const char* str) {
@@ -118,7 +121,7 @@ static int check_request_type(const char* buffer) {
 	return -1;
 }
 
-static int parse_json_request(const char* query, const int size, char** city, char** key, unsigned char* day) {
+static int parse_json_request(const char* query, const int size, char** city, char** session_key, unsigned char* day) {
 	printf("query: %*.s\n\n", size, query);
 
 	int pos = 0;
@@ -142,24 +145,24 @@ static int parse_json_request(const char* query, const int size, char** city, ch
 	mem_cpy(*city, query + pos + 7, len);
 
 	pos = 0;
-	if ((pos = str_n_tok(query, "key", size)) < 0) {
-		printf("No field \"key\" found in the JSON.\n");
+	if ((pos = str_n_tok(query, "sessionKey", size)) < 0) {
+		printf("No field \"sessionKey\" found in the JSON.\n");
 		return -1;
 	}
 
 	len = 0;
-	if ((len = str_n_tok(query + pos + 6, "\"", size - pos - 6)) < 0) {
+	if ((len = str_n_tok(query + pos + 13, "\"", size - pos - 13)) < 0) {
 		printf("missing \" in JSON.\n");
 		return -1;
 	}
 	
-	*key = calloc(len + 1, sizeof(char));
-	if (*key == NULL) {
+	*session_key = calloc(len + 1, sizeof(char));
+	if (*session_key == NULL) {
 		printf("Failed to allocate buffer.\n");
 		return -1;
 	}
 	
-	mem_cpy(*key, query + pos + 6, len);
+	mem_cpy(*session_key, query + pos + 13, len);
 
 	if ((pos = str_n_tok(query, "day", size)) < 0) {
 		printf("No field \"day\" found in the JSON.\n");
@@ -361,6 +364,112 @@ static int init_server(int* sock) {
 
 #endif //_WIN32
 
+#define SESSION_KEY_SIZE 16
+#define BUFF_CHUNK 256
+
+static const char response_unauthorized[] = "HTTP/1.1 401 UNAUTHORIZED\r\n"
+"Content-Type: application/json\r\n"
+"Content-Length: 30\r\n"
+"Access-Control-Allow-Origin: *\r\n"
+"Connection: close\r\n"
+"\r\n"
+"{\"error\":\"Invalid sessionKey\"}";
+
+static int validate_session_key(const char* session_key, const int size) {
+
+#ifdef _WIN32
+	
+	WSADATA wsaData = {0};
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        perror("WSAStartup failed");
+        return -1;
+    }
+
+#endif //_WIN32
+
+	int sock = socket(AF_INET, SOCK_STREAM, 0);
+	if (sock < 0) {
+		perror("Failed to create the client socket");
+		return -1;
+	}
+	
+	struct sockaddr_in addr = {0};
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons(AUTH_SERVER_PORT);
+	addr.sin_addr = (struct in_addr) { .s_addr = htonl(AUTH_SERVER_ADDR) };
+
+	if (connect(sock, (struct sockaddr*) &addr, sizeof(addr)) < 0) {
+		perror("Failed to connect to the socket");
+		close_socket(sock);
+		SOCK_CLEANUP();
+		return -1;
+	}
+	
+	char request[512] = {0};
+	int request_size = snprintf(request, 512, "GET /validateSessionKey HTTP/1.1\r\n"
+	"Host: localhost:4209\r\n"
+	"Connection: keep-alive\r\n"
+	"Content-Length: %d\r\n"
+	"Content-Type: application/json\r\n"
+	"Accept: */*\r\n"
+	"Origin: http://localhost:6969\r\n"
+	"Accept-Encoding: gzip, deflate, br, zstd\r\n"	
+	"Accept-Language: en-US,en;q=0.9,it;q=0.8\r\n"
+	"\r\n"
+	"{\"sessionKey\":\"%.*s\"}", size + 17, size, session_key);
+	
+	int res_len = 0;
+	if ((res_len = send(sock, request, request_size, 0)) != request_size) {
+		if (res_len >= 0) printf("\nSent %d bytes out of %lu.\n", res_len, (unsigned long) request_size);
+		perror("Failed to send the response");
+		close_socket(sock);
+		SOCK_CLEANUP();
+		return -1;
+	}
+	
+	printf("Sent request (%d)!\n", res_len);
+	
+	int ret = 0;
+	char* buffer = (char*) calloc(BUFF_CHUNK, sizeof(unsigned char));
+	if (buffer == NULL) {
+		printf("Failed to reallocate the buffer.\n");
+		return -1;
+	}
+
+	unsigned long long int buf_cnt = 0;
+	while ((ret = recv(sock, buffer + buf_cnt, BUFF_CHUNK, 0)) >= 0) {
+		buf_cnt += ret;
+
+		int pos = 0;
+		if ((pos = str_n_tok(buffer, "\r\n\r\n", buf_cnt)) >= 0) break;
+
+		if ((buffer = realloc(buffer, buf_cnt + BUFF_CHUNK)) == NULL) {
+			printf("Failed to reallocate the buffer.\n");
+			return -1;
+		}
+	}
+
+	if (ret < 0) {
+		SAFE_FREE(buffer);
+		perror("An error occurred while reading, because");
+		return -1;
+	}
+	
+	if (str_n_tok(buffer, "200 OK", buf_cnt) < 0) {
+		printf("Response:\n'%.*s'\n", (int) buf_cnt, buffer);
+		SAFE_FREE(buffer);
+		close_socket(sock);
+		SOCK_CLEANUP();
+		printf("Unathorized sessionKey: '%.*s'\n", SESSION_KEY_SIZE, session_key);
+		return -1;
+	}
+
+	SAFE_FREE(buffer);
+	close_socket(sock);
+	SOCK_CLEANUP();
+
+	return 0;
+}
 
 static const char response_cors[] = "HTTP/1.1 204 No Content\r\n"
 "Access-Control-Allow-Origin: *\r\n"
@@ -405,8 +514,6 @@ int main (void) {
 		printf("New connection accepted.\n");
 		printf("--------------------------\n");
 
-#define BUFF_CHUNK 256
-
 		int ret = 0;
 		char* buffer = (char*) calloc(BUFF_CHUNK, sizeof(unsigned char));
 		if (buffer == NULL) {
@@ -436,10 +543,11 @@ int main (void) {
 					break;
 				}
 				
+				// TODO: Add check for MAX_CONTENT_SIZE
 				content_size = 0;
 				if ((content_size = check_content_size(buffer, buf_cnt)) < 0) {
 					printf("\n\n-------\nBuffer(%llu): \"%s\"\n-------\n\n", buf_cnt, buffer);
-					free(buffer);
+					SAFE_FREE(buffer);
 					printf("An error occurred while checking the content length option field.\n");
 					return 1;
 				}
@@ -478,6 +586,7 @@ int main (void) {
 
 		if (ret < 0) {
 			SAFE_FREE(content);
+			SAFE_FREE(buffer);
 			perror("An error occurred while reading, because");
 			return 1;
 		}
@@ -504,9 +613,9 @@ int main (void) {
 		}
 
 		char* city = NULL;
-		char* key = NULL;
+		char* session_key = NULL;
 		unsigned char day = 0;
-		if (parse_json_request((const char*) content, content_size, &city, &key, &day) < 0) {
+		if (parse_json_request((const char*) content, content_size, &city, &session_key, &day) < 0) {
 			printf("An error occurred while parsing the query.\n");
 			SAFE_FREE(content);
 			return 1;
@@ -514,8 +623,31 @@ int main (void) {
 		
 		SAFE_FREE(content);
 
-		printf("Queried, city: '%s', day: %u with key: '%s'\n", city, day, key);
-		SAFE_FREE(key);
+		printf("Queried, city: '%s', day: %u with sessionKey: '%s'\n", city, day, session_key);
+		
+		if (validate_session_key(session_key, str_len(session_key)) < 0) {
+			SAFE_FREE(session_key);
+			SAFE_FREE(city);
+			
+			int res_len = 0;
+			if ((res_len = send(client_sock, response_unauthorized, sizeof(response_unauthorized), 0)) != sizeof(response_unauthorized)) {
+				if (res_len >= 0) printf("\nSent %d bytes out of %lu.\n", res_len, (unsigned long) sizeof(response_unauthorized));
+				perror("Failed to send the response");
+				return 1;
+			}
+			
+			printf("Sent response back (%d)!\n", res_len);
+			
+			close_socket(client_sock);
+
+			printf("-------------------\n");
+			printf("Connection closed.\n");
+			printf("-------------------\n");
+			
+			continue;
+		}
+
+		SAFE_FREE(session_key);
 		
 		char* response = NULL;
 		int response_size = generate_response(&response, city, day);
