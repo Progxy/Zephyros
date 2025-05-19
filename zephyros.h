@@ -8,6 +8,12 @@
 #define __USE_MISC
 #include <math.h>
 
+#ifdef _WIN32
+	#define EXPORT __declspec(dllexport)
+#else
+	#define EXPORT
+#endif //_WIN32
+
 #define MAX_TIME 1439 // 23:59
 
 #define CLAMP(val, min, max) ((val) > (max) ? (max) : ((val) < (min) ? (min) : (val)))
@@ -81,3 +87,4 @@ double temp_change(WethearStatus* weather, unsigned int delta_time) {
 }
 
 #endif //_ZEPHYROS_H_
+
