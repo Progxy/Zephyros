@@ -3,7 +3,6 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <time.h>
 
 #define __USE_MISC
 #include <math.h>
@@ -16,75 +15,88 @@
 
 #define MAX_TIME 1439 // 23:59
 
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define CLAMP(val, min, max) ((val) > (max) ? (max) : ((val) < (min) ? (min) : (val)))
 #define TO_TIME(time) (((time) - ((time) % 60)) / 60), ((time) % 60)
+#define MAGNITUDE(x, y) sqrt(((x) * (x)) + ((y) * (y)))
 
-typedef struct WethearStatus {
+typedef struct WeatherStatus {
 	double temp;
 	double pressure;
-	double radiative_heat;
 	double humidity;
-	double wind_effect;
-	unsigned short int curr_time;
-} WethearStatus;
+	double wind_velocity;
+	uint8_t wind_direction;
+	uint16_t curr_time;
+} WeatherStatus;
 
-static const double pressure_coeff       = 0.0536432;
-static const double radiative_heat_coeff = 0.9646232;
-static const double humidity_coeff       = 0.0713433532;
-static const double wind_effect_coeff    = 0.001357232;
-
-static double max_radiative_heat = 0;
-static unsigned short int t_sunrise = 0;
-static unsigned short int t_sunset = 0;
-
-void init_heat_const(void) {
-	srand(time(0));
-	max_radiative_heat = rand() / (double) RAND_MAX * 10;
-	t_sunrise = rand() / 5000000;
-	t_sunrise = CLAMP(t_sunrise, 60 * 5, 60 * 7);
-	t_sunset = rand() / 500000;
-	t_sunset = CLAMP(t_sunset, 60 * 16, 60 * 21);
-	printf("max_radiative_heat: %lf, t_sunrise: %02u:%02u, t_sunset: %02u:%02u\n", max_radiative_heat, TO_TIME(t_sunrise), TO_TIME(t_sunset));
-	return;
+static double rk_4(double k1, double h) {
+	double k2 = k1 + h * k1 / 2;
+	double k3 = k1 + h * k2 / 2;
+	double k4 = k1 + h * k3;
+	return k1 + (h / 6) * (k1 + 2 * k2 + 2 * k3 + k4);
 }
 
-double pressure_change(double pressure, unsigned int delta) {
-	double diff = 0.0;
-	for (unsigned int i = 0; i < delta / 15; ++i) diff += (((rand() % 2 ? -1 : 1)) * (rand() / (double) RAND_MAX));
-	return CLAMP(pressure + diff, 0.0, 10.0);
+static int rand_int(int min, int max) {
+	int r = rand();
+	return CLAMP(r, min, max); 
 }
 
-double humidity_change(double humidity, unsigned int delta) {
-	double diff = 0.0;
-	for (unsigned int i = 0; i < delta; ++i) diff += (((rand() % 2 ? -1 : 1)) * (rand() / (double) RAND_MAX)) / 10.0;
-	return CLAMP(humidity + diff, 0.0, 1.0);
-}
+// Constants, to play with the toy model
+#define GAMMA   0.00000000713433532
+#define DELTA   0.0000000713433532
+#define M       12000
+#define BETA_1  0.0000000713433532
+#define BETA_2  0.00000713433532
+#define BETA_3  0.00000713433532
+#define BETA_4  0.0000713433532
+#define ALPHA_1 0.000000713433532
+#define ALPHA_2 0.0000713433532
+#define A       0.00000713433532
+#define EPSILON 0.00000713433532
+#define SIGMA   0.00000713433532
+#define LAMBDA  0.00713433532
 
-double radiative_heat_change(unsigned int delta_time, unsigned short int curr_time) {
-	return max_radiative_heat * sin((M_PI * (curr_time + delta_time - t_sunrise)) / (t_sunset - t_sunrise));
-}
+#define H_SAT(t) (0.8 * exp(0.06 * (t)))
+#define C(h, temp) MAX(0, H_SAT(temp) - h)
+#define Q_IN(t) (A * sin((2 * M_PI * (t)) / 86400))
+#define Q_OUT(temp) (EPSILON * SIGMA * (temp) * (temp) * (temp) * (temp))
 
-double wind_effect_change(double wind_effect, unsigned int delta) {
-	double diff = 0.0;
-	for (unsigned int i = 0; i < delta / 15; ++i) diff += (((rand() % 2 ? -1 : 1)) * (rand() / (double) RAND_MAX));
-	return CLAMP(wind_effect + diff, -100.0, 100.0);
-}
+EXPORT WeatherStatus simulate_weather(WeatherStatus* weather_status, uint64_t seed, uint8_t hours) {
+	srand(seed);
 
-double temp_change(WethearStatus* weather, unsigned int delta_time) {	
-	weather -> pressure = pressure_change(weather -> pressure, delta_time);
-	weather -> humidity = humidity_change(weather -> humidity, delta_time);
-	weather -> radiative_heat = radiative_heat_change(delta_time, weather -> curr_time);
-	weather -> wind_effect = wind_effect_change(weather -> wind_effect, delta_time);
-	weather -> curr_time = (weather -> curr_time + delta_time) % MAX_TIME;
-	
-	return (
-			weather -> temp + 
-			pressure_coeff * weather -> pressure + 
-			radiative_heat_coeff * weather -> radiative_heat + 
-			humidity_coeff * weather -> humidity + 
-			wind_effect_coeff * weather -> wind_effect
-		);
+	const double t_ref = rand_int(10, 20); 
+	const double p_ref = rand_int(900, 1500); 
+	const double h_env = rand_int(50, 75); 
+	const double p_env = rand_int(900, 1500); 
+
+	// Perform 40 RK4 steps with step size 0.025 to simulate an hour
+	for (unsigned int i = 0; i < 40 * hours; ++i) {
+		double temp = weather_status -> temp - GAMMA * MAGNITUDE(weather_status -> wind_direction, weather_status -> wind_velocity) * GAMMA * (weather_status -> temp - t_ref)
+		              + DELTA * C(weather_status -> humidity, weather_status -> temp)
+					  + BETA_1 * (weather_status -> pressure - p_ref) + (Q_IN(i) - Q_OUT(weather_status -> temp)) / M;
+		weather_status -> temp = rk_4(temp, 0.00025);
+
+		double pressure = weather_status -> pressure - GAMMA * MAGNITUDE(weather_status -> wind_direction, weather_status -> wind_velocity)
+		              * GAMMA * (weather_status -> pressure - p_env) + ALPHA_1 * (weather_status -> temp - t_ref);
+		weather_status -> pressure = rk_4(pressure, 0.00025);
+
+		double humidity = weather_status -> humidity - GAMMA * MAGNITUDE(weather_status -> wind_direction, weather_status -> wind_velocity)
+		              * GAMMA * (weather_status -> humidity - h_env) - BETA_2 * C(weather_status -> humidity, weather_status -> temp)
+					  + BETA_3 * (weather_status -> pressure - p_ref);
+		weather_status -> humidity = fmodf(rk_4(humidity, 0.0025), 100.0);
+
+		double wind_direction = weather_status -> wind_direction - LAMBDA * weather_status -> wind_direction
+		              + ALPHA_2 * (weather_status -> temp * t_ref)
+					  + BETA_4 * (weather_status -> pressure - p_ref);
+		weather_status -> wind_direction = fmod(rk_4(wind_direction, 0.0025), 360.0);
+
+		double wind_velocity = weather_status -> wind_velocity - LAMBDA * weather_status -> wind_velocity
+		              + ALPHA_2 * (weather_status -> temp * t_ref)
+					  + BETA_4 * (weather_status -> pressure - p_ref);
+		weather_status -> wind_velocity = rk_4(wind_velocity, 0.0025);
+	}
+
+	return *weather_status;
 }
 
 #endif //_ZEPHYROS_H_
-
